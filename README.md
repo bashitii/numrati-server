@@ -1,5 +1,8 @@
 # Numrati API (server)
 
+> Part of **Numrati | نمرتي**, a marketplace for distinctive Jordanian license plates (HTU Capstone 2).
+> Companion repository: [bashitii/numrati-client](https://github.com/bashitii/numrati-client), the React website that uses this API.
+
 Express + TypeScript backend for Numrati. **All business logic lives here.** Supabase is used only for:
 
 | Supabase part | What we use it for |
@@ -123,3 +126,31 @@ Run this in the SQL Editor:
 ```sql
 update profiles set role = 'admin', verification_status = 'verified' where id = (select id from auth.users where email = 'you@example.com');
 ```
+
+## Architecture (whole project)
+
+```mermaid
+flowchart LR
+  B[Browser<br/>React website] -- "REST /api + login token" --> S[Express API<br/>business rules]
+  B -- "/api/chat" --> A[Sanadak assistant<br/>Gemini]
+  S -- "SQL (DATABASE_URL)" --> D[(Supabase Postgres)]
+  S -- "sign-up, login, token check" --> AU[Supabase Auth]
+  S -- "upload + signed links" --> ST[Supabase Storage<br/>ID photos, ownership docs]
+```
+
+- The website never talks to Supabase. Every request goes through the API, which checks who you are and whether you're allowed to do it.
+- Row Level Security is on for every table with no policies, so Supabase's public Data API can't read or write anything. Only the server, connected directly to Postgres, can.
+- Private files (ID photos, ownership documents) live in private buckets. Admins see them through links that expire after 10 minutes.
+
+## Main features
+
+- **Browse and search** plates by number, category, governorate, price and verified sellers.
+- **Accounts**: email sign-up with a confirmation code, login, ID verification (ID front, back and a selfie).
+- **Selling**: a 4-step listing wizard with an AI-suggested price and an ownership document upload. Listings wait for admin approval.
+- **Buying**: favorites, chat with the seller, purchase requests that the seller can accept or decline.
+- **Notifications** for messages, requests, price changes, approvals and rejections.
+- **Price estimator**: rule-based valuation (the trained model can replace it later without changing the API).
+- **Seller analytics**: views, interested buyers and requests over 7 days to 1 year.
+- **Fraud protection**: every listing gets a risk score (price vs. market, account age, past rejections), shown to admins first.
+- **Admin panel**: dashboard, ID verification queue, listing review, reports, bans and an audit log of every admin action.
+- **Sanadak assistant**: answers questions about plates and DVLD procedures.
