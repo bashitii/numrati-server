@@ -8,6 +8,12 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(20),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  // Sanadak, the GCP Conversational Agents agent (see src/services/sanadak.ts)
+  GCP_PROJECT_ID: z.string().default('midyear-diorama-514913-a7'),
+  GCP_LOCATION: z.string().default('global'),
+  GCP_AGENT_ID: z.string().default('af82b14f-132c-45e3-801b-a8f5ad6b18ce'),
+  GCP_PLAYBOOK_ID: z.string().default('00000000-0000-0000-0000-000000000000'),
+  GCP_LANGUAGE: z.string().default('en'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 

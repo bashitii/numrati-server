@@ -6,6 +6,7 @@ import { pool } from './db/pool.js'
 import { errorHandler, notFoundHandler } from './middleware/error.js'
 import { adminRouter } from './routes/admin.js'
 import { authRouter } from './routes/auth.js'
+import { chatRouter } from './routes/chat.js'
 import { conversationsRouter } from './routes/conversations.js'
 import { estimatesRouter } from './routes/estimates.js'
 import { meRouter } from './routes/me.js'
@@ -49,6 +50,7 @@ app.use('/api/verification', verificationRouter)
 app.use('/api/reports', reportsRouter)
 app.use('/api/estimates', estimatesRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/chat', chatRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

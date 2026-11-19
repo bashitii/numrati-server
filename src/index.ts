@@ -11,5 +11,10 @@ async function shutdown() {
   await pool.end()
   process.exit(0)
 }
+// If a background task fails (e.g. Google Cloud sign-in is missing), log it instead of stopping the whole server
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled error:', reason instanceof Error ? reason.message : reason)
+})
+
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)

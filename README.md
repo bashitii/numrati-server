@@ -119,6 +119,22 @@ Errors always come back as `{ "error": "message", "details"?: [...] }`.
 - `GET /admin/listings?status=pending` (riskiest first) · `POST /admin/listings/:id/approve|reject|suspend|remove|restore|feature|unfeature` `{ reason? }`
 - `GET /admin/reports?status=open|new|review|closed` · `PATCH /admin/reports/:id` `{ status, note? }`
 
+## Sanadak assistant (`POST /api/chat`)
+
+The chat page sends `{ sessionId, messages }` here. The server passes the last question to our Sanadak agent in Google Cloud (Conversational Agents, project `midyear-diorama-514913-a7`), which answers from its playbook and knowledge base. The agent details are in `src/config/env.ts` and the code is in `src/services/sanadak.ts`.
+
+The server signs in to Google with Application Default Credentials:
+
+- **On a laptop:** run `gcloud auth application-default login` once (on a Mac, double-click `Connect Sanadak.command`, which installs the tool and does this).
+- **On Cloud Run:** the service runs as the `numrati-backend` service account (role: Dialogflow API Client), so no key file is needed.
+
+## Deploying to Cloud Run
+
+The `Dockerfile` builds the TypeScript code and starts `node dist/index.js`. Cloud Run builds it straight from this GitHub repo. In the Cloud Run service, set:
+
+- **Security → Service account:** `numrati-backend`
+- **Variables:** `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `CLIENT_ORIGIN` (the website's address)
+
 ## Making someone an admin
 
 Run this in the SQL Editor:
@@ -132,7 +148,7 @@ update profiles set role = 'admin', verification_status = 'verified' where id = 
 ```mermaid
 flowchart LR
   B[Browser<br/>React website] -- "REST /api + login token" --> S[Express API<br/>business rules]
-  B -- "/api/chat" --> A[Sanadak assistant<br/>Gemini]
+  S -- "/api/chat questions" --> A[Sanadak agent<br/>GCP Conversational Agents]
   S -- "SQL (DATABASE_URL)" --> D[(Supabase Postgres)]
   S -- "sign-up, login, token check" --> AU[Supabase Auth]
   S -- "upload + signed links" --> ST[Supabase Storage<br/>ID photos, ownership docs]
