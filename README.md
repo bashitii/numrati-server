@@ -130,7 +130,9 @@ The server signs in to Google with Application Default Credentials:
 
 ## Deploying to Cloud Run
 
-The `Dockerfile` builds the TypeScript code and starts `node dist/index.js`. Cloud Run builds it straight from this GitHub repo. In the Cloud Run service, set:
+The API is live at https://numrati-api-816529305440.europe-west1.run.app/api (service `numrati-api`, region europe-west1).
+
+To deploy a new version from a Mac, double-click `Deploy to Cloud Run.command`. It uploads this folder, builds it with the `Dockerfile`, and copies the Supabase settings from `.env` into Cloud Run. The service uses:
 
 - **Security → Service account:** `numrati-backend`
 - **Variables:** `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `CLIENT_ORIGIN` (the website's address)
