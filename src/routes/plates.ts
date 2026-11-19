@@ -36,6 +36,7 @@ platesRouter.get('/', async (req, res) => {
       minPrice: z.coerce.number().int().min(0).optional(),
       maxPrice: z.coerce.number().int().min(0).optional(),
       status: z.enum(['active', 'sold', 'all']).default('all'),
+      ownership: z.enum(['owned', 'dvld']).optional(),
       sort: z.enum(['latest', 'priceHigh', 'priceLow', 'popular']).default('latest'),
       page: z.coerce.number().int().min(1).default(1),
       limit: z.coerce.number().int().min(1).max(50).default(20),
@@ -58,6 +59,7 @@ platesRouter.get('/', async (req, res) => {
   if (q.minPrice != null) add('p.price >= ?', q.minPrice)
   if (q.maxPrice != null) add('p.price <= ?', q.maxPrice)
   if (q.status !== 'all') add('p.status = ?', q.status)
+  if (q.ownership) add('p.ownership = ?', q.ownership)
 
   const order = {
     latest: 'p.featured desc, coalesce(p.published_at, p.created_at) desc',
@@ -335,7 +337,7 @@ platesRouter.post('/:id/favorite', requireAuth, async (req, res) => {
   const user = currentUser(req)
   const { id } = parseParams(req, idParam)
   await transaction(async (db) => {
-    const plate = await queryOne(`select id, code, seller_id from plates where id = $1 and status = 'active'`, [id], db)
+    const plate = await queryOne(`select id, code, seller_id, ownership from plates where id = $1 and status = 'active'`, [id], db)
     if (!plate) throw notFound('This plate is not available')
     const added = await query(
       'insert into favorites (user_id, plate_id) values ($1, $2) on conflict do nothing returning plate_id',
@@ -344,7 +346,7 @@ platesRouter.post('/:id/favorite', requireAuth, async (req, res) => {
     )
     if (added.length) {
       await query('update plates set favorites_count = favorites_count + 1 where id = $1', [id], db)
-      if (plate.seller_id !== user.id) await notify(plate.seller_id, 'favorite', { plate_id: id, code: plate.code }, db)
+      if (plate.seller_id !== user.id && plate.ownership !== 'dvld') await notify(plate.seller_id, 'favorite', { plate_id: id, code: plate.code }, db)
     }
   })
   res.json({ isFavorite: true })
@@ -364,8 +366,10 @@ platesRouter.delete('/:id/favorite', requireAuth, async (req, res) => {
 // Chat with the seller / send a purchase request
 // ---------------------------------------------------------------------------
 async function startConversation(plateId: string, buyerId: string, db?: Parameters<typeof query>[2]) {
-  const plate = await queryOne(`select id, code, price, seller_id from plates where id = $1 and status = 'active'`, [plateId], db)
+  const plate = await queryOne(`select id, code, price, seller_id, ownership from plates where id = $1 and status = 'active'`, [plateId], db)
   if (!plate) throw notFound('This plate is not available')
+  // DVLD plates have no seller to talk to: they are bought directly at DVLD
+  if (plate.ownership === 'dvld') throw badRequest('This plate is sold by DVLD. You can buy it directly at DVLD.')
   if (plate.seller_id === buyerId) throw badRequest('This is your own listing')
   const conversation = await queryOne<{ id: string }>(
     `insert into conversations (plate_id, buyer_id, seller_id) values ($1, $2, $3)

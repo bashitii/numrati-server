@@ -14,6 +14,7 @@ export const PLATE_CARD_SELECT = `
     coalesce(round(100.0 * (p.price - w.old_price) / nullif(w.old_price, 0), 1), 0)::float8 as "weeklyChange",
     (p.status = 'sold') as sold,
     p.status,
+    p.ownership,
     p.seller_id as "sellerId",
     s.full_name as "sellerName",
     p.published_at as "publishedAt",

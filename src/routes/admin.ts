@@ -7,6 +7,7 @@ import { currentUser, requireAdmin, requireAuth } from '../middleware/auth.js'
 import { parseBody, parseParams, parseQuery } from '../middleware/validate.js'
 import { logAdminAction } from '../services/audit.js'
 import { notify } from '../services/notifications.js'
+import { addDvldPlates, DVLD_ACCOUNT_ID } from '../services/dvld.js'
 import { closeOpenRequests } from '../services/plates.js'
 import { signedUrl } from '../services/storage.js'
 
@@ -28,6 +29,7 @@ adminRouter.get('/dashboard', async (_req, res) => {
        (select count(*)::int from profiles where created_at > now() - interval '7 days') as "newUsersThisWeek",
        (select count(*)::int from verification_requests where status = 'pending') as "pendingVerifications",
        (select count(*)::int from plates where status = 'active') as "activeListings",
+       (select count(*)::int from plates where status = 'active' and ownership = 'dvld') as "dvldListings",
        (select count(*)::int from plates where status = 'pending') as "pendingListings",
        (select count(*)::int from plates where status = 'sold') as "soldListings",
        (select count(*)::int from reports where status <> 'closed') as "openReports",
@@ -142,6 +144,7 @@ adminRouter.post('/users/:id/:action', async (req, res) => {
   const { id, action } = parseParams(req, uuidParam.extend({ action: z.enum(['ban', 'unban']) }))
   const body = parseBody(req, z.object({ reason: note }))
   if (id === admin.id) throw badRequest('You cannot ban yourself')
+  if (id === DVLD_ACCOUNT_ID) throw badRequest('The DVLD account cannot be banned')
   const ban = action === 'ban'
 
   await transaction(async (db) => {
@@ -289,6 +292,95 @@ adminRouter.patch('/reports/:id', async (req, res) => {
       await notify(report.reporter_id, 'report_update', { report_id: id, status: body.status, plate_id: report.plate_id }, db)
     }
     await logAdminAction(admin.id, `report_${body.status}`, 'report', String(id), { note: body.note }, db)
+  })
+  res.json({ ok: true })
+})
+
+// ---------------------------------------------------------------------------
+// DVLD plates: numbers DVLD still sells. They belong to the DVLD account,
+// which nobody signs in to, so admins manage them here.
+// ---------------------------------------------------------------------------
+// GET /api/admin/dvld?search=31-&page=1
+adminRouter.get('/dvld', async (req, res) => {
+  const q = parseQuery(
+    req,
+    z.object({
+      search: z.string().trim().max(20).optional(),
+      page: z.coerce.number().int().min(1).default(1),
+    }),
+  )
+  const digits = q.search?.replace(/\D/g, '') || null
+  const where = `ownership = 'dvld' and status = 'active' and ($1::text is null or regexp_replace(code, '\\D', '', 'g') like '%' || $1 || '%')`
+  const [items, count] = await Promise.all([
+    query(
+      `select id, code, price, category, governorate, views_count as views, favorites_count as interested, created_at as "createdAt"
+       from plates where ${where}
+       order by created_at desc, code
+       limit 50 offset $2`,
+      [digits, (q.page - 1) * 50],
+    ),
+    queryOne<{ total: number }>(`select count(*)::int as total from plates where ${where}`, [digits]),
+  ])
+  res.json({ items, total: count?.total ?? 0, page: q.page })
+})
+
+// POST /api/admin/dvld  { plates: [{ code, price, governorate? }] }  (one plate or a whole pasted / uploaded list)
+adminRouter.post('/dvld', async (req, res) => {
+  const admin = currentUser(req)
+  const { plates } = parseBody(
+    req,
+    z.object({
+      plates: z
+        .array(z.object({ code: z.string().max(20), price: z.coerce.number(), governorate: z.string().max(20).optional() }))
+        .min(1, 'Add at least one plate')
+        .max(5000, 'Add at most 5,000 plates at a time'),
+    }),
+  )
+  const result = await addDvldPlates(plates, { adminId: admin.id })
+  if (result.added.length) {
+    await logAdminAction(admin.id, 'dvld_add', 'plate', result.added.length === 1 ? result.added[0].id : `${result.added.length} plates`, {
+      count: result.added.length,
+      code: result.added.length === 1 ? result.added[0].code : null,
+    })
+  }
+  res.status(result.added.length ? 201 : 200).json({ added: result.added.length, skipped: result.skipped })
+})
+
+// PATCH /api/admin/dvld/:id  { price }  DVLD changed its official price
+adminRouter.patch('/dvld/:id', async (req, res) => {
+  const admin = currentUser(req)
+  const { id } = parseParams(req, uuidParam)
+  const { price } = parseBody(req, z.object({ price: z.coerce.number().int().min(50).max(5_000_000) }))
+
+  await transaction(async (db) => {
+    const plate = await queryOne(`select id, code, price from plates where id = $1 and ownership = 'dvld' and status = 'active' for update`, [id], db)
+    if (!plate) throw notFound('DVLD plate not found')
+    if (plate.price === price) return
+    await query('update plates set price = $2, estimated_value = $2, updated_at = now() where id = $1', [id, price], db)
+    await query('insert into price_history (plate_id, old_price, new_price) values ($1, $2, $3)', [id, plate.price, price], db)
+    // Tell everyone who saved this plate
+    const fans = await query<{ user_id: string }>('select user_id from favorites where plate_id = $1', [id], db)
+    for (const fan of fans) {
+      await notify(fan.user_id, 'price_change', { plate_id: id, code: plate.code, old_price: plate.price, new_price: price }, db)
+    }
+    await logAdminAction(admin.id, 'dvld_price', 'plate', id, { code: plate.code, old_price: plate.price, new_price: price }, db)
+  })
+  res.json({ ok: true })
+})
+
+// POST /api/admin/dvld/:id/remove  Someone bought the number at DVLD, so it is no longer available
+adminRouter.post('/dvld/:id/remove', async (req, res) => {
+  const admin = currentUser(req)
+  const { id } = parseParams(req, uuidParam)
+  await transaction(async (db) => {
+    const plate = await queryOne(
+      `update plates set status = 'removed', featured = false, updated_at = now()
+       where id = $1 and ownership = 'dvld' and status = 'active' returning code`,
+      [id],
+      db,
+    )
+    if (!plate) throw notFound('DVLD plate not found')
+    await logAdminAction(admin.id, 'dvld_remove', 'plate', id, { code: plate.code }, db)
   })
   res.json({ ok: true })
 })

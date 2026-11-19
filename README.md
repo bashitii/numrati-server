@@ -43,7 +43,19 @@ supabase/migrations/  database schema (tables only, no SQL functions)
    ```
    Demo logins use the password `Numrati2026`: `admin@`, `mohammad@`, `khaled@`, `ahmad@`, `reem@`, `nour@` (all `@numrati.test`).
 
-   To put the demo back to a clean state (for example right before a presentation), run `npm run reset-demo`. It deletes only the six demo accounts, everything they created and their uploaded files, then seeds again. Real accounts are not touched.
+   To put the demo back to a clean state (for example right before a presentation), run `npm run reset-demo`. It deletes only the six demo accounts, everything they created and their uploaded files, then seeds again. Real accounts and DVLD plates are not touched.
+
+### Two kinds of listings
+
+- **Owned:** a plate a person owns and resells. Buyers chat with the seller and send purchase requests.
+- **DVLD:** a number DVLD still sells and nobody has bought yet. It's shown at its official price, and buyers get a "How to buy from DVLD" guide instead of chat. These plates belong to a special DVLD account that nobody can sign in to. Admins manage them on the **DVLD Plates** page (`/admin/dvld`): add one or a pasted/CSV list, change a price, or remove a plate once it's bought at DVLD.
+
+To add many DVLD plates from a spreadsheet (a "Plate" or "Code" + "Number" column and a "Price" column):
+
+```bash
+npm run import-dvld -- path/to/file.xlsx --dry-run   # shows what would be added
+npm run import-dvld -- path/to/file.xlsx             # adds them (already-listed numbers are skipped)
+```
 5. Run it:
    ```bash
    npm run dev
@@ -91,7 +103,7 @@ Errors always come back as `{ "error": "message", "details"?: [...] }`.
 - 🔒 `GET /auth/me` · `PATCH /auth/me` `{ fullName?, phone? }` · `POST /auth/change-password` · `POST /auth/logout`
 
 **Plates**
-- `GET /plates?q=&category=&governorate=&verifiedOnly=&featured=&minPrice=&maxPrice=&status=active|sold|all&sort=latest|priceHigh|priceLow|popular&page=&limit=`
+- `GET /plates?q=&category=&governorate=&ownership=owned|dvld&verifiedOnly=&featured=&minPrice=&maxPrice=&status=active|sold|all&sort=latest|priceHigh|priceLow|popular&page=&limit=` → `{ items, total, hasMore }`
 - `GET /plates/:id`: details, seller, price history, similar plates (counts a view when signed in)
 - 🔒✅ `POST /plates`: JSON or multipart with an optional `ownershipDoc` file. The listing waits for admin approval.
 - 🔒 `PATCH /plates/:id` `{ price?, category?, governorate? }` · `POST /plates/:id/sold` · `DELETE /plates/:id`
@@ -118,6 +130,7 @@ Errors always come back as `{ "error": "message", "details"?: [...] }`.
 - `GET /admin/users?search=` · `POST /admin/users/:id/ban|unban` `{ reason? }`
 - `GET /admin/listings?status=pending` (riskiest first) · `POST /admin/listings/:id/approve|reject|suspend|remove|restore|feature|unfeature` `{ reason? }`
 - `GET /admin/reports?status=open|new|review|closed` · `PATCH /admin/reports/:id` `{ status, note? }`
+- `GET /admin/dvld?search=&page=` · `POST /admin/dvld` `{ plates: [{ code, price }] }` · `PATCH /admin/dvld/:id` `{ price }` · `POST /admin/dvld/:id/remove`
 
 ## Sanadak assistant (`POST /api/chat`)
 
