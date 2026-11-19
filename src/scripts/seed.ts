@@ -9,13 +9,17 @@
  *   ahmad@numrati.test     Verified seller
  *   reem@numrati.test      ID verification waiting for admin review
  *   nour@numrati.test      New buyer, not verified yet
+ *
+ * The 200 plates come from data/plates.json: real plate numbers with their official DVLD prices,
+ * taken from the team's DVLD collection spreadsheet (Numrati_DVLD_Collection_Plan.xlsx).
  */
+import { readFileSync } from 'node:fs'
 import { pool, query, transaction } from '../db/pool.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 
 const PASSWORD = 'Numrati2026'
 const U = (n: number) => `00000000-0000-4000-a000-00000000000${n}`
-const P = (n: number) => `00000000-0000-4000-b000-0000000000${String(n).padStart(2, '0')}`
+const P = (n: number) => `00000000-0000-4000-b000-${String(n).padStart(12, '0')}`
 const C = (n: number) => `00000000-0000-4000-c000-00000000000${n}`
 
 const users = [
@@ -27,20 +31,34 @@ const users = [
   { id: U(6), email: 'nour@numrati.test', name: 'نور سالم', phone: '+962795550110', role: 'buyer', status: 'unverified', ageDays: 1 },
 ]
 
-// [n, seller, code, category, governorate, price, estimate, status, featured, ageDays, soldDaysAgo]
-const plates: [number, number, string, string, string, number, number, string, boolean, number, number | null][] = [
-  [1, 2, '1-9252', 'special', 'amman', 85000, 88000, 'active', true, 21, null],
-  [2, 3, '33-441', 'exclusive', 'irbid', 15000, 15800, 'active', false, 10, null],
-  [3, 2, '80-4000', 'special', 'amman', 9500, 10200, 'active', false, 12, null],
-  [4, 3, '11-318', 'repeated', 'zarqa', 22000, 21000, 'active', false, 2, null],
-  [5, 4, '11-98881', 'special', 'aqaba', 11200, 11500, 'active', false, 14, null],
-  [6, 4, '15-51552', 'repeated', 'balqa', 14000, 13200, 'active', false, 16, null],
-  [7, 2, '20-12345', 'sequential', 'amman', 18000, 19000, 'active', false, 18, null],
-  [8, 3, '12-6789', 'sequential', 'karak', 4800, 5200, 'active', false, 20, null],
-  [9, 4, '50-77777', 'regular', 'irbid', 8500, 9900, 'sold', false, 31, 5],
-  [10, 3, '11-1188', 'special', 'amman', 18000, 17500, 'pending', false, 0, null],
-  [11, 4, '7-777', 'repeated', 'irbid', 900, 26000, 'pending', false, 0, null],
-]
+interface SeedPlate {
+  n: number
+  seller: number
+  code: string
+  category: string
+  governorate: string
+  /** asking price */
+  price: number
+  /** official DVLD price */
+  marketValue: number
+  status: 'active' | 'sold' | 'pending'
+  featured: boolean
+  ageDays: number
+  soldDaysAgo: number | null
+  extraViews: number
+  previousPrice?: number
+}
+const plates: SeedPlate[] = JSON.parse(readFileSync(new URL('./data/plates.json', import.meta.url), 'utf8'))
+const plate = (n: number) => plates.find((p) => p.n === n)!
+
+// Plates with a part in the demo story (fixed numbers in plates.json)
+const featuredPlate = plate(1) // Mohammad's featured plate
+const chatPlate = plate(3) // Khaled chats with Mohammad and sends a purchase request
+const otherChatPlate = plate(7) // Ahmad asks Mohammad about it
+const reportedPlate = plate(8) // "incorrect details" report
+const suspiciousPlate = plate(11) // listed far below its DVLD price, waiting for admin review
+const offer = Math.round((chatPlate.price * 0.93) / 100) * 100
+const jd = (n: number) => n.toLocaleString('en-US')
 
 async function createAuthUsers() {
   for (const u of users) {
@@ -78,8 +96,8 @@ async function seedDatabase() {
       db,
     )
 
-    for (const [n, seller, code, category, gov, price, estimate, status, featured, age, sold] of plates) {
-      const risky = code === '7-777'
+    for (const p of plates) {
+      const risky = p.n === suspiciousPlate.n
       await query(
         `insert into plates (id, seller_id, code, category, governorate, price, estimated_value, status, featured,
                              owner_name, owner_national_id, risk_score, risk_flags,
@@ -91,22 +109,24 @@ async function seedDatabase() {
                  case when $8::listing_status <> 'pending' then now() - make_interval(days => $13) + interval '1 day' end,
                  now() - make_interval(days => $13) - interval '1 hour')
          on conflict (id) do nothing`,
-        [P(n), U(seller), code, category, gov, price, estimate, status, featured,
-         `99${String(n).padStart(8, '0')}`, risky ? 90 : 12, risky ? ['price_far_below_market', 'price_below_estimate'] : [],
-         age, sold],
+        [P(p.n), U(p.seller), p.code, p.category, p.governorate, p.price, p.marketValue, p.status, p.featured,
+         `99${String(p.n).padStart(8, '0')}`, risky ? 90 : 12, risky ? ['price_far_below_market', 'price_below_estimate'] : [],
+         p.ageDays, p.soldDaysAgo],
         db,
       )
     }
 
     // Recent price changes, so cards show "+x% this week"
-    await query(
-      `insert into price_history (plate_id, old_price, new_price, changed_at)
-       select v.plate_id::uuid, v.old_price, v.new_price, now() - interval '3 days'
-       from (values ($1, 80800, 85000), ($2, 9550, 9500), ($3, 20300, 22000)) as v(plate_id, old_price, new_price)
-       where not exists (select 1 from price_history)`,
-      [P(1), P(3), P(4)],
-      db,
-    )
+    const hasHistory = (await query('select 1 from price_history limit 1', [], db)).length > 0
+    if (!hasHistory) {
+      for (const p of plates.filter((x) => x.previousPrice)) {
+        await query(
+          `insert into price_history (plate_id, old_price, new_price, changed_at) values ($1, $2, $3, now() - interval '3 days')`,
+          [P(p.n), p.previousPrice, p.price],
+          db,
+        )
+      }
+    }
 
     const favorites = [[2, 2], [2, 4], [2, 5], [3, 1], [3, 3], [4, 1], [4, 7], [6, 1]]
     for (const [user, plate] of favorites) {
@@ -126,11 +146,12 @@ async function seedDatabase() {
       [],
       db,
     )
+    // Plus the views from visitors who weren't signed in
     await query(
-      `update plates p set views_count = (select count(*) from plate_views v where v.plate_id = p.id)
-         + case p.code when '1-9252' then 1150 when '80-4000' then 430 when '11-318' then 760 when '20-12345' then 490
-                       when '15-51552' then 650 when '11-98881' then 420 when '33-441' then 215 when '12-6789' then 180 else 190 end`,
-      [],
+      `update plates p set views_count = (select count(*) from plate_views v where v.plate_id = p.id) + x.extra
+       from (select unnest($1::uuid[]) as id, unnest($2::int[]) as extra) x
+       where x.id = p.id`,
+      [plates.map((p) => P(p.n)), plates.map((p) => p.extraViews)],
       db,
     )
 
@@ -140,18 +161,18 @@ async function seedDatabase() {
          ($1, $2, $3, $4, now() - interval '2 hours'),
          ($5, $6, $7, $4, now() - interval '1 day')
        on conflict (id) do nothing`,
-      [C(1), P(3), U(3), U(2), C(2), P(7), U(4)],
+      [C(1), P(chatPlate.n), U(3), U(2), C(2), P(otherChatPlate.n), U(4)],
       db,
     )
     const hasMessages = (await query('select 1 from messages limit 1', [], db)).length > 0
     if (!hasMessages) {
       const messages: [string, string, string, string][] = [
-        [C(1), U(3), 'السلام عليكم، هل اللوحة 80-4000 لا تزال متاحة؟', '100 minutes'],
+        [C(1), U(3), `السلام عليكم، هل اللوحة ${chatPlate.code} لا تزال متاحة؟`, '100 minutes'],
         [C(1), U(2), 'وعليكم السلام! نعم، اللوحة متاحة. كيف أستطيع مساعدتك؟', '98 minutes'],
-        [C(1), U(3), 'هل السعر 9,500 JD قابل للتفاوض؟ أقدر أقدم 8,800 JD', '95 minutes'],
+        [C(1), U(3), `هل السعر ${jd(chatPlate.price)} JD قابل للتفاوض؟ أقدر أقدم ${jd(offer)} JD`, '95 minutes'],
         [C(1), U(2), 'يمكن نتفاهم، تعال نجلس ونحكي بالتفاصيل 😊', '92 minutes'],
         [C(1), U(3), 'ممتاز! متى يناسبك؟', '90 minutes'],
-        [C(2), U(4), 'Hi, is 20-12345 still available?', '26 hours'],
+        [C(2), U(4), `Hi, is ${otherChatPlate.code} still available?`, '26 hours'],
         [C(2), U(2), 'Yes it is. Thanks for the interest!', '25 hours'],
       ]
       for (const [conversation, sender, body, ago] of messages) {
@@ -173,8 +194,8 @@ async function seedDatabase() {
       )
       await query(
         `insert into purchase_requests (plate_id, buyer_id, seller_id, conversation_id, offered_price, message, created_at)
-         values ($1, $2, $3, $4, 8800, 'I can pay 8,800 JD and meet at the DVLD this week.', now() - interval '80 minutes')`,
-        [P(3), U(3), U(2), C(1)],
+         values ($1, $2, $3, $4, $5, $6, now() - interval '80 minutes')`,
+        [P(chatPlate.n), U(3), U(2), C(1), offer, `I can pay ${jd(offer)} JD and meet at the DVLD this week.`],
         db,
       )
     }
@@ -184,20 +205,23 @@ async function seedDatabase() {
     if (!hasReports) {
       await query(
         `insert into reports (reporter_id, plate_id, reported_user_id, reason, details, status, created_at) values
-           ($1, $2, $3, 'suspicious_price', 'Plate 7-777 is listed for 900 JD, far below the market value', 'new', now() - interval '30 minutes'),
+           ($1, $2, $3, 'suspicious_price', $9, 'new', now() - interval '30 minutes'),
            ($4, null, $5, 'unverified_seller', 'This user offers plates in chat without a verified ID', 'review', now() - interval '2 hours'),
-           ($3, $6, $7, 'duplicate', 'I saw the same plate 80-4000 posted on another site', 'review', now() - interval '4 hours'),
-           ($5, $8, $1, 'incorrect_details', 'The governorate for plate 12-6789 looks wrong', 'closed', now() - interval '1 day')`,
-        [U(3), P(11), U(4), U(5), U(6), P(3), U(2), P(8)],
+           ($3, $6, $7, 'duplicate', $10, 'review', now() - interval '4 hours'),
+           ($5, $8, $1, 'incorrect_details', $11, 'closed', now() - interval '1 day')`,
+        [U(3), P(suspiciousPlate.n), U(4), U(5), U(6), P(chatPlate.n), U(2), P(reportedPlate.n),
+         `Plate ${suspiciousPlate.code} is listed for ${jd(suspiciousPlate.price)} JD, but its DVLD price is ${jd(suspiciousPlate.marketValue)} JD`,
+         `I saw the same plate ${chatPlate.code} posted on another site`,
+         `The governorate for plate ${reportedPlate.code} looks wrong`],
         db,
       )
       await query(
         `insert into notifications (user_id, type, data, read_at, created_at) values
            ($1, 'message', jsonb_build_object('conversation_id', $2::text, 'plate_id', $3::text, 'sender_name', 'خالد العمر', 'preview', 'ممتاز! متى يناسبك؟'), null, now() - interval '90 minutes'),
-           ($1, 'purchase_request', jsonb_build_object('plate_id', $3::text, 'code', '80-4000', 'offered_price', 8800, 'buyer_name', 'خالد العمر'), null, now() - interval '80 minutes'),
-           ($1, 'listing_approved', jsonb_build_object('plate_id', $4::text, 'code', '1-9252'), now(), now() - interval '20 days'),
-           ($1, 'favorite', jsonb_build_object('plate_id', $4::text, 'code', '1-9252'), now(), now() - interval '1 day')`,
-        [U(2), C(1), P(3), P(1)],
+           ($1, 'purchase_request', jsonb_build_object('plate_id', $3::text, 'code', $5::text, 'offered_price', $6::int, 'buyer_name', 'خالد العمر'), null, now() - interval '80 minutes'),
+           ($1, 'listing_approved', jsonb_build_object('plate_id', $4::text, 'code', $7::text), now(), now() - interval '20 days'),
+           ($1, 'favorite', jsonb_build_object('plate_id', $4::text, 'code', $7::text), now(), now() - interval '1 day')`,
+        [U(2), C(1), P(chatPlate.n), P(featuredPlate.n), chatPlate.code, offer, featuredPlate.code],
         db,
       )
       await query(
