@@ -66,12 +66,19 @@ platesRouter.get('/', async (req, res) => {
     popular: 'p.views_count desc',
   }[q.sort]
 
-  // live plates first, then sold
+  // live plates first, then sold. p.id breaks ties so pages never repeat or skip a plate.
   const sql = `${PLATE_CARD_SELECT} where ${where.join(' and ')}
-               order by (p.status = 'sold'), ${order}
+               order by (p.status = 'sold'), ${order}, p.id
                limit ${q.limit + 1} offset ${(q.page - 1) * q.limit}`
-  const rows = await query(sql, params)
-  res.json({ items: rows.slice(0, q.limit), page: q.page, hasMore: rows.length > q.limit })
+  // The page of plates, plus how many plates match in total (for "186 results")
+  const [rows, count] = await Promise.all([
+    query(sql, params),
+    queryOne<{ total: number }>(
+      `select count(*)::int as total from plates p join profiles s on s.id = p.seller_id where ${where.join(' and ')}`,
+      params,
+    ),
+  ])
+  res.json({ items: rows.slice(0, q.limit), page: q.page, hasMore: rows.length > q.limit, total: count?.total ?? 0 })
 })
 
 // ---------------------------------------------------------------------------
