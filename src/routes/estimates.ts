@@ -8,7 +8,7 @@ import { CATEGORIES, detectTraits, estimatePrice, GOVERNORATES } from '../servic
 export const estimatesRouter = Router()
 
 const inputSchema = z.object({
-  code: z.string().trim().regex(/^[0-9]{1,2}-[0-9]{1,5}$/, 'Plate number must look like 12-34567'),
+  code: z.string().trim().regex(/^[1-9][0-9]?-[0-9]{1,5}$/, 'Plate number must be 1-2 digits (1 to 99), a dash, then 1-5 digits, e.g. 1-22222'),
   category: z.enum(CATEGORIES),
   governorate: z.enum(GOVERNORATES),
   sequential: z.boolean().optional(),

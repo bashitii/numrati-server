@@ -15,7 +15,7 @@ import { deleteFiles, saveFile, upload } from '../services/storage.js'
 export const platesRouter = Router()
 
 const idParam = z.object({ id: z.guid('Invalid plate id') })
-const plateCode = z.string().trim().regex(/^[0-9]{1,2}-[0-9]{1,5}$/, 'Plate number must look like 12-34567')
+const plateCode = z.string().trim().regex(/^[1-9][0-9]?-[0-9]{1,5}$/, 'Plate number must be 1-2 digits (1 to 99), a dash, then 1-5 digits, e.g. 1-22222')
 const price = z.coerce.number().int().min(50).max(5_000_000)
 const bool = z.union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')])
 
