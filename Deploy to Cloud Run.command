@@ -22,7 +22,16 @@ fi
 "$G" config set project "$PROJECT" --quiet
 
 echo ""
-echo "2) Reading the settings from .env..."
+echo "2) Making sure Sanadak can use Gemini (Vertex AI) and the knowledge base..."
+"$G" services enable aiplatform.googleapis.com discoveryengine.googleapis.com --quiet
+for ROLE in roles/aiplatform.user roles/discoveryengine.viewer; do
+  "$G" projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$RUN_AS" --role "$ROLE" --condition=None --quiet >/dev/null \
+    && echo "  $RUN_AS has $ROLE"
+done
+
+echo ""
+echo "3) Reading the settings from .env..."
 ENV_FILE="$(mktemp)"
 trap 'rm -f "$ENV_FILE"' EXIT
 for NAME in DATABASE_URL SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
@@ -36,7 +45,7 @@ done
 echo 'CLIENT_ORIGIN: "http://localhost:5173,http://localhost:5174"' >> "$ENV_FILE"
 
 echo ""
-echo "3) Building and deploying (this takes about 3 to 6 minutes)..."
+echo "4) Building and deploying (this takes about 3 to 6 minutes)..."
 "$G" run deploy "$SERVICE" \
   --source . \
   --region "$REGION" \

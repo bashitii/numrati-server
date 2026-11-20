@@ -134,12 +134,16 @@ Errors always come back as `{ "error": "message", "details"?: [...] }`.
 
 ## Sanadak assistant (`POST /api/chat`)
 
-The chat page sends `{ sessionId, messages }` here. The server passes the last question to our Sanadak agent in Google Cloud (Conversational Agents, project `midyear-diorama-514913-a7`), which answers from its playbook and knowledge base. The agent details are in `src/config/env.ts` and the code is in `src/services/sanadak.ts`.
+The chat page sends `{ sessionId, question, history }` here. The server asks **Gemini on Vertex AI** (project `midyear-diorama-514913-a7`) with Sanadak's rules, and Gemini searches the **Numrati Knowledge Base** data store (Vertex AI Search) before answering. The answer is **streamed**: the reply is plain text sent in pieces while Gemini writes it, and the page shows it word by word. The code is in `src/services/sanadak.ts`, and the settings are in `src/config/env.ts`.
+
+For signed-in users each question and answer is saved (`assistant_chats`, `assistant_messages`), so they can open, continue and delete past chats:
+
+- `GET /chat/history` · `GET /chat/history/:id` · `DELETE /chat/history/:id`
 
 The server signs in to Google with Application Default Credentials:
 
 - **On a laptop:** run `gcloud auth application-default login` once (on a Mac, double-click `Connect Sanadak.command`, which installs the tool and does this).
-- **On Cloud Run:** the service runs as the `numrati-backend` service account (role: Dialogflow API Client), so no key file is needed.
+- **On Cloud Run:** the service runs as the `numrati-backend` service account, which needs the **Vertex AI User** and **Discovery Engine Viewer** roles. No key file is needed.
 
 ## Deploying to Cloud Run
 
@@ -163,7 +167,7 @@ update profiles set role = 'admin', verification_status = 'verified' where id = 
 ```mermaid
 flowchart LR
   B[Browser<br/>React website] -- "REST /api + login token" --> S[Express API<br/>business rules]
-  S -- "/api/chat questions" --> A[Sanadak agent<br/>GCP Conversational Agents]
+  S -- "/api/chat questions (streamed)" --> A[Sanadak<br/>Gemini on Vertex AI + knowledge base]
   S -- "SQL (DATABASE_URL)" --> D[(Supabase Postgres)]
   S -- "sign-up, login, token check" --> AU[Supabase Auth]
   S -- "upload + signed links" --> ST[Supabase Storage<br/>ID photos, ownership docs]
